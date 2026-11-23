@@ -5,6 +5,7 @@ import { GraphStore } from './graph-store';
 import { BridgeError, TauriBridge } from './tauri-bridge';
 import { NetworkSettings } from './network-settings';
 import { TransformService } from './transform-service';
+import { ConsoleLog } from './console-log';
 import { TransformManifestEntry, TransformResponse } from '../models/transform';
 import { AI_TAG } from './graph-tools';
 import { MAX_TOOL_STEPS, buildSystemPrompt } from '../models/chat-context';
@@ -45,14 +46,18 @@ class FakeBridge {
   async transformList() {
     return [DNS];
   }
-  async transformRun(_job: string, id: string, entity: { value: string; type: string }) {
+  logHandler?: (e: { job_id: string; transform_id: string; line: string }) => void;
+  lastJob = '';
+  async transformRun(job: string, id: string, entity: { value: string; type: string }) {
+    this.lastJob = job;
     this.transformCalls.push({ id, value: entity.value, type: entity.type });
     return this.transformImpl();
   }
   async cancelJob(job: string) {
     this.cancelled.push(job);
   }
-  async onTransformLog() {
+  async onTransformLog(handler: (e: { job_id: string; transform_id: string; line: string }) => void) {
+    this.logHandler = handler;
     return () => undefined;
   }
 }
@@ -313,6 +318,33 @@ describe('ChatService', () => {
     expect(chat.messages()).toEqual([]);
     expect(store.dirty()).toBe(false);
     expect(autosaves).toBe(0);
+  });
+
+  it('transform warnings appear once, whether streamed on stderr or only in messages', async () => {
+    const transforms = TestBed.inject(TransformService);
+    bridge.transformImpl = async () => {
+      bridge.logHandler!({ job_id: bridge.lastJob, transform_id: 'dns', line: '[warn] AAAA: timed out' });
+      return {
+        contract_version: 1,
+        entities: [],
+        messages: [
+          { level: 'warn', text: 'AAAA: timed out' },
+          { level: 'warn', text: 'only in the JSON' },
+        ],
+      } as TransformResponse;
+    };
+    await transforms.run('dns', { type: 'Domain', value: 'example.com' });
+    const texts = TestBed.inject(ConsoleLog).lines().map((l) => l.text);
+    expect(texts.filter((t) => t === 'AAAA: timed out').length).toBe(1);
+    expect(texts.filter((t) => t === 'only in the JSON').length).toBe(1);
+  });
+
+  it('labels entity references given as ids, values or proposals', () => {
+    const d = store.upsertEntity({ type: 'Domain', value: 'acme.example' }).entity;
+    expect(chat.labelOf(d.id)).toBe('acme.example');
+    expect(chat.labelOf('ACME.example')).toBe('acme.example');
+    expect(chat.labelOf('not-on-graph.example')).toBe('not-on-graph.example');
+    expect(chat.labelOf('6f1c1f5e-2a4b-4c3d-9e8f-0a1b2c3d4e5f')).toBe('unknown entity');
   });
 
   it('refuses to send without a model', async () => {

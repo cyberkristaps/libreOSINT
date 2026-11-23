@@ -22,9 +22,14 @@ export class TransformService {
   readonly transforms = signal<TransformManifestEntry[]>([]);
   readonly available = this.bridge.isTauri;
   private loaded?: Promise<void>;
+  /** stderr lines already shown live, per running job, so `messages` don't repeat them. */
+  private readonly streamed = new Map<string, Set<string>>();
 
   constructor() {
-    void this.bridge.onTransformLog((e) => this.log.log(levelOf(e.line), e.transform_id, stripLevel(e.line)));
+    void this.bridge.onTransformLog((e) => {
+      this.streamed.get(e.job_id)?.add(stripLevel(e.line));
+      this.log.log(levelOf(e.line), e.transform_id, stripLevel(e.line));
+    });
   }
 
   ensureLoaded(): Promise<void> {
@@ -54,6 +59,8 @@ export class TransformService {
     const proxy = this.network.proxy();
     this.log.log('info', transformId, `▶ ${input.type} ${input.value}${proxy ? ` (via ${this.network.badge()})` : ''}`);
     const started = performance.now();
+    const shown = new Set<string>();
+    this.streamed.set(jobId, shown);
     try {
       const res = await this.bridge.transformRun(
         jobId,
@@ -63,12 +70,18 @@ export class TransformService {
         proxy,
       );
       const secs = ((performance.now() - started) / 1000).toFixed(1);
+      // Warnings a transform only put in its JSON `messages` (not on stderr) would otherwise go unseen.
+      for (const m of res.messages ?? []) {
+        if ((m.level === 'warn' || m.level === 'error') && !shown.has(m.text)) this.log.log(m.level, transformId, m.text);
+      }
       this.log.log('info', transformId, `✓ ${res.entities.length} result(s) in ${secs}s`);
       return res;
     } catch (err) {
       const e = err as BridgeError;
       this.log.log(e.kind === 'cancelled' ? 'warn' : 'error', transformId, e.kind === 'cancelled' ? 'cancelled' : e.message);
       throw err;
+    } finally {
+      this.streamed.delete(jobId);
     }
   }
 
@@ -77,7 +90,6 @@ export class TransformService {
     const res = await this.run(transformId, entity);
     const r = this.tools.ingestTransform(entity.id, transformId, res);
     this.log.log('info', transformId, `Added ${r.created} new, merged ${r.merged}, ${r.edges} link(s)`);
-    for (const m of res.messages ?? []) if (m.level === 'warn' || m.level === 'error') this.log.log(m.level, transformId, m.text);
     this.store.select(entity.id);
     return r;
   }

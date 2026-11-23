@@ -85,6 +85,7 @@ const isTemp = (el: cytoscape.SingularElementArgument) => EH_TEMP_CLASSES.some((
           }
         </select>
       </label>
+      <button type="button" title="Run the selected layout again" aria-label="Run the selected layout again" (click)="runLayout($any(layoutSelect.value))">↻</button>
       <button type="button" (click)="fit()">Fit</button>
       <button
         type="button"

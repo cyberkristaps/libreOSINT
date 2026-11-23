@@ -17,7 +17,7 @@ import { GraphStore } from '../../core/services/graph-store';
 import { TauriBridge } from '../../core/services/tauri-bridge';
 import { renderMarkdown } from '../../core/models/markdown';
 import { ENTITY_META } from '../../core/models/entity-meta';
-import { ChatMessage, PROPOSAL_ID_PREFIX, Proposal } from '../../core/models/chat';
+import { ChatMessage, Proposal } from '../../core/models/chat';
 import { EntityType, isEntityType } from '../../core/models/entity';
 
 @Component({
@@ -114,16 +114,8 @@ export class Chat implements OnInit {
     void this.bridge.openExternal(a.getAttribute('href') ?? '');
   }
 
-  protected labelOf(id: string | undefined): string {
-    if (!id) return '';
-    if (id.startsWith(PROPOSAL_ID_PREFIX)) {
-      for (const m of this.chat.messages()) {
-        const p = m.meta?.proposals.find((x) => x.id === id);
-        if (p?.kind === 'entity') return `${p.args.value} (proposed)`;
-      }
-      return id;
-    }
-    return this.store.entities().get(id)?.value ?? 'unknown entity';
+  protected labelOf(ref: string | undefined): string {
+    return this.chat.labelOf(ref);
   }
 
   protected colorOf(type: string): string {

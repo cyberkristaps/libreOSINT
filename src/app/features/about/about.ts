@@ -3,7 +3,7 @@ import { UiState } from '../../core/services/ui-state';
 import { TauriBridge } from '../../core/services/tauri-bridge';
 
 /** Placeholder until the public repository exists. */
-export const GITHUB_URL = 'https://github.com/your-username/libreOSINT';
+export const GITHUB_URL = 'https://github.com/cyberkristaps/libreOSINT';
 
 @Component({
   selector: 'app-about',

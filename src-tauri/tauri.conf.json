@@ -37,7 +37,8 @@
       "icons/icon.ico"
     ],
     "resources": {
-      "../transforms/": "transforms/"
+      "../transforms/*.py": "transforms/",
+      "../transforms/manifest.json": "transforms/manifest.json"
     }
   }
 }

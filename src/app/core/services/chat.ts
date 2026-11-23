@@ -27,6 +27,7 @@ interface OllamaChatResponse {
   error?: string;
 }
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const HISTORY_MESSAGES = 20;
 const MAX_TOOL_RESULT_CHARS = 12000;
 
@@ -389,9 +390,21 @@ export class ChatService {
     return this.messages().find((m) => m.id === id)?.content ?? '';
   }
 
-  private labelOf(id: string): string {
-    return this.store.entities().get(id)?.value ?? id;
+  /** Label for an entity reference as the model gives it: an entity id, an entity value, or a proposal id. */
+  labelOf(ref: string | undefined): string {
+    if (!ref) return '';
+    if (ref.startsWith(PROPOSAL_ID_PREFIX)) {
+      for (const m of this.messages()) {
+        const p = m.meta?.proposals.find((x) => x.id === ref);
+        if (p?.kind === 'entity') return `${p.args.value} (proposed)`;
+      }
+      return ref;
+    }
+    const found = this.tools.findEntity(ref);
+    if (found) return found.value;
+    return UUID.test(ref) ? 'unknown entity' : ref;
   }
+
 }
 
 function parseArgs(raw: Record<string, unknown> | string | undefined): Record<string, unknown> {

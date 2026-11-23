@@ -3,7 +3,6 @@ import { CaseFile } from '../../core/services/case-file';
 import { CanvasControl, LAYOUTS } from '../../core/services/canvas-control';
 import { ConsoleLog } from '../../core/services/console-log';
 import { GraphStore } from '../../core/services/graph-store';
-import { TauriBridge } from '../../core/services/tauri-bridge';
 import { ThemeService } from '../../core/services/theme';
 import { UiState } from '../../core/services/ui-state';
 
@@ -83,7 +82,6 @@ export class Menubar {
   private readonly store = inject(GraphStore);
   private readonly canvas = inject(CanvasControl);
   private readonly theme = inject(ThemeService);
-  private readonly bridge = inject(TauriBridge);
   private readonly log = inject(ConsoleLog);
   private readonly ui = inject(UiState);
 
