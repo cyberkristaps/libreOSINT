@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://libreosint.dev/schema/manifest.schema.json",
+  "title": "TransformManifest",
+  "type": "object",
+  "required": [
+    "contract_version",
+    "transforms"
+  ],
+  "properties": {
+    "contract_version": {
+      "const": 1
+    },
+    "transforms": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "name",
+          "command",
+          "input_types",
+          "output_types",
+          "timeout_s"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]*$"
+          },
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "command": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1
+          },
+          "input_types": {
+            "type": "array",
+            "items": {
+              "$ref": "entity.schema.json#/$defs/EntityType"
+            },
+            "minItems": 1
+          },
+          "output_types": {
+            "type": "array",
+            "items": {
+              "$ref": "entity.schema.json#/$defs/EntityType"
+            }
+          },
+          "timeout_s": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 3600
+          },
+          "rate_limit": {
+            "type": "object",
+            "properties": {
+              "max_concurrent": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "min_interval_ms": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          },
+          "requires_keys": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[A-Z][A-Z0-9_]*$"
+            }
+          }
+        }
+      }
+    }
+  }
+}

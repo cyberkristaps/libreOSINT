@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://libreosint.dev/schema/entity.schema.json",
+  "title": "Entity",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "type",
+    "value",
+    "properties",
+    "notes",
+    "tags",
+    "created_at"
+  ],
+  "$defs": {
+    "EntityType": {
+      "enum": [
+        "Domain",
+        "Subdomain",
+        "IPv4",
+        "IPv6",
+        "Email",
+        "Phone_Number",
+        "Person",
+        "Alias",
+        "Organization",
+        "Social_Account",
+        "Location",
+        "URL",
+        "SSL_Cert",
+        "Port_Service"
+      ]
+    }
+  },
+  "properties": {
+    "id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "type": {
+      "$ref": "#/$defs/EntityType"
+    },
+    "value": {
+      "type": "string",
+      "minLength": 1
+    },
+    "properties": {
+      "type": "object"
+    },
+    "notes": {
+      "type": "string",
+      "description": "Markdown"
+    },
+    "tags": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

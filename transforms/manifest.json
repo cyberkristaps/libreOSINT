@@ -1,0 +1,200 @@
+{
+  "$schema": "../schema/manifest.schema.json",
+  "contract_version": 1,
+  "transforms": [
+    {
+      "id": "domain_to_dns",
+      "name": "Domain → DNS records",
+      "description": "Resolve A, AAAA, MX, NS and TXT records of a domain (dnspython, or DNS-over-HTTPS fallback).",
+      "command": [
+        "python3",
+        "domain_to_dns.py"
+      ],
+      "input_types": [
+        "Domain",
+        "Subdomain"
+      ],
+      "output_types": [
+        "IPv4",
+        "IPv6",
+        "Domain"
+      ],
+      "timeout_s": 30,
+      "rate_limit": {
+        "max_concurrent": 2,
+        "min_interval_ms": 0
+      },
+      "requires_keys": []
+    },
+    {
+      "id": "domain_to_crtsh",
+      "name": "Domain → Certificate Transparency",
+      "description": "Find subdomains and TLS certificates for a domain in crt.sh Certificate Transparency logs.",
+      "command": [
+        "python3",
+        "domain_to_crtsh.py"
+      ],
+      "input_types": [
+        "Domain",
+        "Subdomain"
+      ],
+      "output_types": [
+        "Subdomain",
+        "SSL_Cert"
+      ],
+      "timeout_s": 120,
+      "rate_limit": {
+        "max_concurrent": 1,
+        "min_interval_ms": 2000
+      },
+      "requires_keys": []
+    },
+    {
+      "id": "ip_to_rdap",
+      "name": "IP → RDAP / ASN",
+      "description": "Look up the registered network owner (RDAP) of a public IP address; network range, CIDRs and origin ASN are added as properties of the IP.",
+      "command": [
+        "python3",
+        "ip_to_rdap.py"
+      ],
+      "input_types": [
+        "IPv4",
+        "IPv6"
+      ],
+      "output_types": [
+        "Organization"
+      ],
+      "timeout_s": 30,
+      "rate_limit": {
+        "max_concurrent": 2,
+        "min_interval_ms": 500
+      },
+      "requires_keys": []
+    },
+    {
+      "id": "url_to_headers",
+      "name": "URL → HTTP headers",
+      "description": "Fetch HTTP response headers of a URL: server banner, security headers and redirect chain.",
+      "command": [
+        "python3",
+        "url_to_headers.py"
+      ],
+      "input_types": [
+        "URL",
+        "Domain",
+        "Subdomain"
+      ],
+      "output_types": [
+        "URL"
+      ],
+      "timeout_s": 25,
+      "rate_limit": {
+        "max_concurrent": 2,
+        "min_interval_ms": 0
+      },
+      "requires_keys": []
+    },
+    {
+      "id": "web_search",
+      "name": "Web search",
+      "description": "Search the web for a free-text query (the value) and return result URLs with titles and snippets. Falls back to DuckDuckGo Instant Answer + Wikipedia when full web results are unavailable.",
+      "command": [
+        "python3",
+        "web_search.py"
+      ],
+      "input_types": [
+        "Domain",
+        "Subdomain",
+        "IPv4",
+        "IPv6",
+        "Email",
+        "Phone_Number",
+        "Person",
+        "Alias",
+        "Organization",
+        "Social_Account",
+        "Location",
+        "URL",
+        "SSL_Cert",
+        "Port_Service"
+      ],
+      "output_types": [
+        "URL"
+      ],
+      "timeout_s": 30,
+      "rate_limit": {
+        "max_concurrent": 1,
+        "min_interval_ms": 3000
+      },
+      "requires_keys": []
+    },
+    {
+      "id": "fetch_page_text",
+      "name": "URL → page text",
+      "description": "Download a web page and return its title, description, readable text, outbound links and any analytics/ad tracking codes (Google Analytics, GTM, AdSense) as properties.",
+      "command": [
+        "python3",
+        "fetch_page_text.py"
+      ],
+      "input_types": [
+        "URL",
+        "Domain",
+        "Subdomain"
+      ],
+      "output_types": [
+        "URL"
+      ],
+      "timeout_s": 30,
+      "rate_limit": {
+        "max_concurrent": 2,
+        "min_interval_ms": 0
+      },
+      "requires_keys": []
+    },
+    {
+      "id": "ip_to_internetdb",
+      "name": "IP → open ports & vulns (InternetDB)",
+      "description": "Open ports, software (CPE), known vulnerabilities (CVEs) and hostnames of a public IP from Shodan InternetDB's scan data. Does not contact the target.",
+      "command": [
+        "python3",
+        "ip_to_internetdb.py"
+      ],
+      "input_types": [
+        "IPv4",
+        "IPv6"
+      ],
+      "output_types": [
+        "Port_Service",
+        "Domain",
+        "Subdomain"
+      ],
+      "timeout_s": 20,
+      "rate_limit": {
+        "max_concurrent": 2,
+        "min_interval_ms": 1000
+      },
+      "requires_keys": []
+    },
+    {
+      "id": "username_to_accounts",
+      "name": "Username → accounts",
+      "description": "Check ~700 websites for accounts with this username (WhatsMyName site list) and return the profiles found. Takes about a minute; hits are leads to verify.",
+      "command": [
+        "python3",
+        "username_to_accounts.py"
+      ],
+      "input_types": [
+        "Alias"
+      ],
+      "output_types": [
+        "Social_Account"
+      ],
+      "timeout_s": 240,
+      "rate_limit": {
+        "max_concurrent": 1,
+        "min_interval_ms": 0
+      },
+      "requires_keys": []
+    }
+  ]
+}

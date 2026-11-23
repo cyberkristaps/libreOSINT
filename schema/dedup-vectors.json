@@ -1,0 +1,295 @@
+{
+  "description": "Shared normalization test vectors: [type, input, expected value_norm]. Asserted by Rust and TS test suites (Phase 2).",
+  "normalize": [
+    [
+      "Domain",
+      "Example.COM",
+      "example.com"
+    ],
+    [
+      "Domain",
+      "example.com.",
+      "example.com"
+    ],
+    [
+      "Domain",
+      "  example.com  ",
+      "example.com"
+    ],
+    [
+      "Subdomain",
+      "WWW.Example.com.",
+      "www.example.com"
+    ],
+    [
+      "Email",
+      "Alice@Example.com",
+      "alice@example.com"
+    ],
+    [
+      "IPv4",
+      " 192.0.2.1 ",
+      "192.0.2.1"
+    ],
+    [
+      "IPv6",
+      "2001:0DB8:0000:0000:0000:0000:0000:0001",
+      "2001:db8::1"
+    ],
+    [
+      "IPv6",
+      "2001:db8:0:0:1:0:0:1",
+      "2001:db8::1:0:0:1"
+    ],
+    [
+      "URL",
+      "HTTPS://Example.COM/Path?Q=1",
+      "https://example.com/Path?Q=1"
+    ],
+    [
+      "Person",
+      "  Jane Doe ",
+      "Jane Doe"
+    ],
+    [
+      "Organization",
+      "Example Inc.",
+      "Example Inc."
+    ],
+    [
+      "IPv6",
+      "::FFFF:192.0.2.1",
+      "::ffff:192.0.2.1"
+    ],
+    [
+      "IPv6",
+      "::",
+      "::"
+    ],
+    [
+      "IPv6",
+      "1::",
+      "1::"
+    ],
+    [
+      "URL",
+      "https://User@Example.COM:8443/A#Frag",
+      "https://User@example.com:8443/A#Frag"
+    ],
+    [
+      "URL",
+      "example.com/x",
+      "example.com/x"
+    ],
+    [
+      "Social_Account",
+      "https://twitter.com/JDoe/",
+      "x.com/jdoe"
+    ],
+    [
+      "Social_Account",
+      "https://mobile.twitter.com/JDoe",
+      "x.com/jdoe"
+    ],
+    [
+      "Social_Account",
+      "x.com/JDoe",
+      "x.com/jdoe"
+    ],
+    [
+      "Social_Account",
+      "https://www.instagram.com/J.Doe/?hl=en",
+      "instagram.com/j.doe"
+    ],
+    [
+      "Social_Account",
+      "https://m.facebook.com/john.doe#about",
+      "facebook.com/john.doe"
+    ],
+    [
+      "Social_Account",
+      "https://www.linkedin.com/in/Jane-Doe-123/",
+      "linkedin.com/in/jane-doe-123"
+    ],
+    [
+      "Social_Account",
+      "https://www.youtube.com/channel/UCabcDEF",
+      "youtube.com/channel/UCabcDEF"
+    ],
+    [
+      "Social_Account",
+      "https://www.tiktok.com/@JDoe",
+      "tiktok.com/@jdoe"
+    ],
+    [
+      "Social_Account",
+      "@JDoe@Mastodon.Social",
+      "mastodon.social/@jdoe"
+    ],
+    [
+      "Social_Account",
+      "https://mastodon.social/@JDoe",
+      "mastodon.social/@jdoe"
+    ],
+    [
+      "Social_Account",
+      "  @JDoe ",
+      "@jdoe"
+    ],
+    [
+      "Phone_Number",
+      "+371 2000 0000",
+      "+37120000000"
+    ],
+    [
+      "Phone_Number",
+      "+1 (555) 010-0000",
+      "+15550100000"
+    ],
+    [
+      "Phone_Number",
+      "0044 20 7946 0000",
+      "+442079460000"
+    ],
+    [
+      "Phone_Number",
+      "tel:+371-2000-0000",
+      "+37120000000"
+    ],
+    [
+      "Phone_Number",
+      "020 7946 0000",
+      "02079460000"
+    ],
+    [
+      "Alias",
+      "  @JDoe92 ",
+      "jdoe92"
+    ],
+    [
+      "Alias",
+      "Dark   Lord",
+      "dark lord"
+    ],
+    [
+      "Location",
+      "Riga,Latvia",
+      "riga, latvia"
+    ],
+    [
+      "Location",
+      "  Riga ,  Latvia ",
+      "riga, latvia"
+    ],
+    [
+      "Location",
+      "56.9496, 24.1052",
+      "56.9496, 24.1052"
+    ],
+    [
+      "Location",
+      "+56.94960,24.10520",
+      "56.9496, 24.1052"
+    ],
+    [
+      "Location",
+      "-33.8688 151.2093",
+      "-33.8688, 151.2093"
+    ],
+    [
+      "Location",
+      "-0.0, 007.5",
+      "0, 7.5"
+    ]
+  ],
+  "invalid": [
+    [
+      "IPv4",
+      "999.1.1.1"
+    ],
+    [
+      "IPv6",
+      "not-an-ip"
+    ],
+    [
+      "IPv4",
+      "192.0.2.01"
+    ],
+    [
+      "IPv4",
+      "1.2.3"
+    ],
+    [
+      "IPv6",
+      "1:::2"
+    ],
+    [
+      "IPv6",
+      "1:2:3:4:5:6:7:8:9"
+    ],
+    [
+      "Domain",
+      "   "
+    ],
+    [
+      "Person",
+      ""
+    ],
+    [
+      "Domain",
+      "example .com"
+    ],
+    [
+      "Domain",
+      "https://example.com"
+    ],
+    [
+      "Subdomain",
+      "user@example.com"
+    ],
+    [
+      "Domain",
+      "example.com:443"
+    ],
+    [
+      "Social_Account",
+      "   "
+    ],
+    [
+      "Social_Account",
+      "https://"
+    ],
+    [
+      "Phone_Number",
+      "call me"
+    ],
+    [
+      "Phone_Number",
+      "123"
+    ],
+    [
+      "Phone_Number",
+      "+1234567890123456"
+    ],
+    [
+      "Phone_Number",
+      "aa€1234"
+    ],
+    [
+      "Phone_Number",
+      "+📞12345"
+    ],
+    [
+      "Alias",
+      "  @ "
+    ],
+    [
+      "Location",
+      "   "
+    ],
+    [
+      "Location",
+      "91.0, 10"
+    ]
+  ]
+}

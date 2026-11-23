@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://libreosint.dev/schema/transform-input.schema.json",
+  "title": "TransformRequest",
+  "type": "object",
+  "required": [
+    "contract_version",
+    "transform_id",
+    "entity",
+    "params"
+  ],
+  "properties": {
+    "contract_version": {
+      "const": 1
+    },
+    "transform_id": {
+      "type": "string"
+    },
+    "entity": {
+      "type": "object",
+      "required": [
+        "id",
+        "type",
+        "value",
+        "properties"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "type": {
+          "$ref": "entity.schema.json#/$defs/EntityType"
+        },
+        "value": {
+          "type": "string"
+        },
+        "properties": {
+          "type": "object"
+        }
+      }
+    },
+    "params": {
+      "type": "object"
+    }
+  }
+}

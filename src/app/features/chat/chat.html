@@ -1,0 +1,172 @@
+<div class="chat-bar">
+  <span class="status-dot" [class]="'status-dot status-' + modelStatus()" [attr.title]="modelError() || 'Ollama ' + modelStatus()"></span>
+  <span class="model-chip mono" [class.missing]="!settings.model()">{{ settings.model() || 'no model selected' }}</span>
+  @if (!settings.autoApply()) {
+    <span class="review-badge" title="Graph changes are proposed as cards for you to apply">Review mode</span>
+  }
+  <span class="spacer"></span>
+  <button type="button" class="icon-btn" [class.active]="settingsOpen()" title="AI settings" aria-label="AI settings" (click)="settingsOpen.set(!settingsOpen())">⚙</button>
+</div>
+
+@if (settingsOpen()) {
+  <div class="chat-settings">
+    <label>
+      <span>Ollama URL</span>
+      <input #urlInput class="mono" [value]="settings.url()" (change)="setUrl(urlInput.value)" (keydown.enter)="setUrl(urlInput.value)" />
+    </label>
+    <label>
+      <span>Model</span>
+      <span class="row">
+        <select #modelSelect [value]="settings.model()" (change)="settings.model.set(modelSelect.value)" [disabled]="!models().length">
+          @if (!models().length) {
+            <option value="">{{ modelStatus() === 'loading' ? 'Loading…' : 'No models' }}</option>
+          }
+          @for (m of models(); track m) {
+            <option [value]="m" [selected]="m === settings.model()">{{ m }}</option>
+          }
+        </select>
+        <button type="button" title="Reload models from /api/tags" (click)="refreshModels()">↻</button>
+      </span>
+    </label>
+    @if (modelError()) {
+      <p class="settings-error">{{ modelError() }}</p>
+    }
+    <label class="toggle">
+      <input type="checkbox" [checked]="settings.autoApply()" (change)="settings.autoApply.set($any($event.target).checked)" />
+      <span>Auto-apply to graph</span>
+    </label>
+    <p class="muted small">Off: the AI's new entities and notes appear as cards with an <strong>Apply to Graph</strong> button.</p>
+    <button type="button" class="danger" [disabled]="!chat.messages().length" (click)="chat.clear()">Clear conversation</button>
+  </div>
+}
+
+<div class="chat-log" #log>
+  @for (m of chat.messages(); track m.id) {
+    @if (m.role === 'user') {
+      <div class="bubble user">{{ m.content }}</div>
+    } @else {
+      <div class="bubble assistant">
+        @if (m.meta?.steps?.length) {
+          <div class="steps">
+            @for (s of m.meta!.steps; track s.id) {
+              <details class="pill" [class]="'pill pill-' + s.status">
+                <summary>
+                  <span class="pill-icon" aria-hidden="true">
+                    @switch (s.status) {
+                      @case ('running') { <span class="spinner"></span> }
+                      @case ('done') { ✓ }
+                      @case ('error') { ✕ }
+                      @default { ⊘ }
+                    }
+                  </span>
+                  <span class="pill-name">{{ s.kind === 'tool' ? s.name : s.name }}</span>
+                  @if (s.args?.['value']) {
+                    <span class="pill-arg mono">{{ s.args!['value'] }}</span>
+                  }
+                  @if (s.summary) {
+                    <span class="pill-summary">· {{ s.summary }}</span>
+                  }
+                </summary>
+                @if (s.args) {
+                  <pre class="pill-detail">{{ s.args | json }}</pre>
+                }
+                @if (s.detail) {
+                  <pre class="pill-detail">{{ s.detail }}</pre>
+                }
+                @if (!s.args && !s.detail) {
+                  <p class="muted small pill-empty">{{ s.status === 'running' ? 'Waiting for the model…' : 'No details.' }}</p>
+                }
+              </details>
+            }
+          </div>
+        }
+
+        @if (m.content) {
+          <div class="md" [innerHTML]="md(m.content)" (click)="onContentClick($event)"></div>
+        } @else if (m.meta?.status === 'running') {
+          <div class="typing"><span></span><span></span><span></span></div>
+        }
+        @if (m.meta?.status === 'error') {
+          <p class="settings-error">{{ m.meta!.error }}</p>
+        }
+
+        @if (m.meta?.proposals?.length) {
+          <div class="proposals">
+            <div class="proposals-head">
+              <span>Proposed changes</span>
+              @if (pendingIn(m) > 1) {
+                <button type="button" class="primary small-btn" (click)="chat.applyAll(m.id)">Apply all ({{ pendingIn(m) }})</button>
+              }
+            </div>
+            @for (p of m.meta!.proposals; track p.id) {
+              <div class="card" [class]="'card card-' + p.status">
+                @if (p.kind === 'entity') {
+                  <div class="card-title">
+                    <span class="type-dot" [style.background]="colorOf(p.args.entity_type)"></span>
+                    <span class="muted">{{ p.args.entity_type }}</span>
+                    <span class="mono">{{ p.args.value }}</span>
+                  </div>
+                  @if (p.args.source_id) {
+                    <div class="card-link muted small">from {{ labelOf(p.args.source_id) }} —{{ p.args.edge_label || 'related_to' }}→</div>
+                  }
+                  @if (propsOf(p).length) {
+                    <dl class="kv card-props">
+                      @for (kv of propsOf(p); track kv[0]) {
+                        <dt>{{ kv[0] }}</dt><dd class="mono">{{ kv[1] }}</dd>
+                      }
+                    </dl>
+                  }
+                  @if (p.args.initial_note) {
+                    <div class="md card-note" [innerHTML]="md(p.args.initial_note)" (click)="onContentClick($event)"></div>
+                  }
+                } @else {
+                  <div class="card-title">📝 Note on <span class="mono">{{ labelOf(p.args.entity_id) }}</span></div>
+                  <div class="md card-note" [innerHTML]="md(p.args.note_markdown)" (click)="onContentClick($event)"></div>
+                }
+                @if (p.error) {
+                  <p class="settings-error">{{ p.error }}</p>
+                }
+                <div class="card-actions">
+                  @switch (p.status) {
+                    @case ('applied') { <span class="badge ok">✓ Applied</span> }
+                    @case ('dismissed') { <span class="badge muted">Dismissed</span> }
+                    @default {
+                      <button type="button" (click)="chat.dismissProposal(m.id, p.id)">Dismiss</button>
+                      <button type="button" class="primary" (click)="chat.applyProposal(m.id, p.id)">Apply to Graph</button>
+                    }
+                  }
+                </div>
+              </div>
+            }
+          </div>
+        }
+      </div>
+    }
+  } @empty {
+    <div class="chat-empty">
+      <p><strong>AI Investigator</strong> runs on your local Ollama. It can look things up with the lookup transforms and add what it finds to the graph.</p>
+      @for (s of suggestions; track s) {
+        <button type="button" class="suggestion" (click)="useSuggestion(s)">{{ s }}</button>
+      }
+    </div>
+  }
+</div>
+
+<div class="context-chip muted small" title="Sent to the model as context on every message">
+  Context: {{ selectedCount() }} selected · {{ store.counts().entities }} entities · {{ store.counts().edges }} links
+</div>
+<form class="chat-input" (submit)="send($event)">
+  <textarea
+    #input
+    rows="3"
+    placeholder="Ask the AI investigator…  (Enter to send, Shift+Enter for a new line)"
+    [value]="chat.draft()"
+    (input)="chat.draft.set(input.value)"
+    (keydown)="onKey($event)"
+  ></textarea>
+  @if (chat.busy()) {
+    <button type="button" class="danger" (click)="chat.cancel()">Cancel</button>
+  } @else {
+    <button type="submit" class="primary" [disabled]="!chat.draft().trim() || !settings.model()">Send</button>
+  }
+</form>
