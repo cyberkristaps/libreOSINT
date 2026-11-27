@@ -5,7 +5,7 @@ A local-first OSINT and link-analysis workbench for security researchers.
 <img width="2880" height="1760" alt="image" src="https://github.com/user-attachments/assets/2c172735-e23a-4144-aa2d-b2e7d295bb91" />
 
 
-**Features:** graph canvas · 15 entity types with automatic de-duplication · built-in lookups (DNS, certificates, RDAP, open ports, HTTP headers, page text, web search, news search, username search) with results grouped into branches · AI investigator on local Ollama · proxy routing for lookups · undo/redo · one SQLite `.case` file per investigation.
+**Features:** graph canvas · 15 entity types with automatic de-duplication · built-in lookups (DNS, certificates, domain registration (WHOIS / RDAP), IP RDAP, open ports, HTTP headers, page text, web search, news search, username search) with results grouped into branches · AI investigator on local Ollama · proxy routing for lookups · undo/redo · one SQLite `.case` file per investigation.
 
 ## Build
 

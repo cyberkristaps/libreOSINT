@@ -50,6 +50,31 @@
       "requires_keys": []
     },
     {
+      "id": "domain_to_whois",
+      "name": "Domain → Registration (WHOIS / RDAP)",
+      "description": "Who registered a domain: registrar, registrant (when the registry publishes it, otherwise its country and the registry's contact form), registration and expiry dates, name servers. RDAP where the registry offers it, classic WHOIS otherwise (e.g. .lv).",
+      "command": [
+        "python3",
+        "domain_to_whois.py"
+      ],
+      "input_types": [
+        "Domain",
+        "Subdomain"
+      ],
+      "output_types": [
+        "Domain",
+        "Organization",
+        "Person",
+        "Email"
+      ],
+      "timeout_s": 45,
+      "rate_limit": {
+        "max_concurrent": 1,
+        "min_interval_ms": 1500
+      },
+      "requires_keys": []
+    },
+    {
       "id": "ip_to_rdap",
       "name": "IP → RDAP / ASN",
       "description": "Look up the registered network owner (RDAP) of a public IP address; network range, CIDRs and origin ASN are added as properties of the IP.",

@@ -12,6 +12,7 @@ sys.path.insert(0, HERE)
 
 import domain_to_crtsh  # noqa: E402
 import domain_to_dns  # noqa: E402
+import domain_to_whois  # noqa: E402
 import fetch_page_text  # noqa: E402
 import ip_to_internetdb  # noqa: E402
 import news_search  # noqa: E402
@@ -315,6 +316,135 @@ class NewsTests(unittest.TestCase):
         with mock.patch.object(news_search, "http_request", return_value=resp), mock.patch("sys.stderr", io.StringIO()):
             news_search.handle(t)
         self.assertEqual(doc(t)["entities"], [])
+
+
+class WhoisTests(unittest.TestCase):
+    LV = """[Domain]
+Domain: kiberzona.lv
+Status: active
+
+[Holder]
+Type: Natural person
+Country: LV
+Visit: https://www.nic.lv/whois/contact/kiberzona.lv to contact.
+
+[Nservers]
+Nserver: ariella.ns.cloudflare.com
+Nserver: ray.ns.cloudflare.com
+
+[Whois]
+Updated: 2026-11-27T06:12:38.254099+00:00
+
+% It is permitted to use the WHOIS service only for technical needs.
+"""
+    GENERIC = """Domain Name: EXAMPLE.ORG
+Registrar: Example Registrar, LLC
+Creation Date: 1995-08-31T04:00:00Z
+Registry Expiry Date: 2027-08-30T04:00:00Z
+Registrant Name: REDACTED FOR PRIVACY
+Registrant Organization: ACME Corp
+Registrant Country: DE
+Registrant Email: Please query the RDDS service of the Registrar of Record
+Name Server: A.IANA-SERVERS.NET
+Name Server: B.IANA-SERVERS.NET
+Domain Status: clientTransferProhibited https://icann.org/epp#clientTransferProhibited
+"""
+
+    def run_with(self, t, rec):
+        with mock.patch.object(domain_to_whois, "lookup", return_value=rec), mock.patch("sys.stderr", io.StringIO()):
+            domain_to_whois.handle(t)
+        return doc(t)
+
+    def test_parses_lv_sections(self):
+        rec = domain_to_whois.parse_whois(self.LV)
+        self.assertEqual(rec["registrant_kind"], "person")
+        self.assertEqual(rec["registrant_country"], "LV")
+        self.assertEqual(rec["registrant_contact_form"], "https://www.nic.lv/whois/contact/kiberzona.lv")
+        self.assertEqual(rec["name_servers"], ["ariella.ns.cloudflare.com", "ray.ns.cloudflare.com"])
+        self.assertNotIn("updated", rec)  # the [Whois] section's timestamp is the query time, not a domain change
+
+    def test_parses_generic_whois_and_skips_redacted_values(self):
+        rec = domain_to_whois.parse_whois(self.GENERIC)
+        self.assertEqual(rec["registrar"], "Example Registrar, LLC")
+        self.assertEqual(rec["created"], "1995-08-31T04:00:00Z")
+        self.assertEqual(rec["expires"], "2027-08-30T04:00:00Z")
+        self.assertIsNone(rec["registrant_name"])
+        self.assertEqual(rec["registrant_org"], "ACME Corp")
+        self.assertIsNone(rec.get("registrant_email"))
+        self.assertEqual(rec["status"], ["clientTransferProhibited"])
+        self.assertEqual(rec["name_servers"], ["a.iana-servers.net", "b.iana-servers.net"])
+
+    def test_parses_rdap_entities(self):
+        rdap = {
+            "events": [{"eventAction": "registration", "eventDate": "2007-10-09T18:20:50Z"}],
+            "nameservers": [{"ldhName": "NS1.EXAMPLE.NET."}],
+            "entities": [
+                {"roles": ["registrar"], "publicIds": [{"type": "IANA Registrar ID", "identifier": "292"}],
+                 "vcardArray": ["vcard", [["fn", {}, "text", "MarkMonitor Inc."]]]},
+                {"roles": ["registrant"], "vcardArray": ["vcard", [["fn", {}, "text", ""], ["adr", {"cc": "US"}, "text", ["", "", "", "", "CA", "", ""]],
+                 ["contact-uri", {}, "uri", "https://domains.example/whois/contact/x.com"]]]},
+            ],
+        }
+        rec = domain_to_whois.parse_rdap(rdap)
+        self.assertEqual((rec["registrar"], rec["registrar_iana_id"], rec["created"]), ("MarkMonitor Inc.", "292", "2007-10-09T18:20:50Z"))
+        self.assertEqual(rec["name_servers"], ["ns1.example.net"])
+        self.assertEqual(rec["registrant_country"], "US")
+        self.assertIsNone(rec["registrant_name"])
+        self.assertEqual(rec["registrant_contact_form"], "https://domains.example/whois/contact/x.com")
+
+    def test_withheld_registrant_becomes_a_note_not_an_entity(self):
+        rec = {k: v for k, v in domain_to_whois.parse_whois(self.LV).items() if v is not None}
+        rec["source"] = "whois:whois.nic.lv"
+        d = self.run_with(transform("Domain", "kiberzona.lv"), rec)
+        self.assertEqual([e["type"] for e in d["entities"]], ["Domain"])
+        props = d["entities"][0]["properties"]
+        self.assertIn("private person in LV", props["registrant"])
+        self.assertIn("nic.lv/whois/contact", props["registrant"])
+
+    def test_published_registrant_and_registrar_become_entities(self):
+        rec = {"source": "rdap", "registrar": "Example Registrar, LLC", "registrant_org": "ACME Corp", "registrant_email": "dns@acme.example", "registrant_seen": True}
+        d = self.run_with(transform("Domain", "acme.example"), rec)
+        found = {(e["type"], e["value"]) for e in d["entities"]}
+        self.assertIn(("Organization", "ACME Corp"), found)
+        self.assertIn(("Email", "dns@acme.example"), found)
+        self.assertIn((INPUT_REF, "registered_with", "Example Registrar, LLC"), edges_of_whois(d))
+        self.assertIn((INPUT_REF, "registered_to", "ACME Corp"), edges_of_whois(d))
+
+    def test_subdomain_is_looked_up_at_its_registered_parent(self):
+        t = transform("Subdomain", "www.shop.example.co.uk")
+        self.assertEqual(domain_to_whois.candidates(t), ["www.shop.example.co.uk", "shop.example.co.uk", "example.co.uk", "co.uk"])
+        calls = []
+
+        def fake_lookup(_t, domain):
+            calls.append(domain)
+            return {"source": "rdap", "registrar": "R"} if domain == "example.co.uk" else None
+
+        with mock.patch.object(domain_to_whois, "lookup", side_effect=fake_lookup), mock.patch("sys.stderr", io.StringIO()):
+            domain_to_whois.handle(t)
+        self.assertEqual(calls, ["www.shop.example.co.uk", "shop.example.co.uk", "example.co.uk"])
+        self.assertIn((INPUT_REF, "subdomain_of", "example.co.uk"), edges_of_whois(doc(t)))
+
+    def test_rejects_non_domains_and_reports_unregistered(self):
+        from osint_transform import TransformError
+
+        with self.assertRaises(TransformError):
+            domain_to_whois.candidates(transform("Domain", "not a domain"))
+        self.assertTrue(domain_to_whois.looks_unregistered("Status: free"))
+        with mock.patch.object(domain_to_whois, "rdap_lookup", return_value=None), mock.patch.object(
+            domain_to_whois, "whois_server_for", return_value="whois.nic.lv"
+        ), mock.patch.object(domain_to_whois, "whois_query", return_value="[Error]\nToken: invalid_query_error\nMessage: Invalid query 'www.kiberzona.lv'.\n"), mock.patch(
+            "sys.stderr", io.StringIO()
+        ):
+            self.assertIsNone(domain_to_whois.lookup(transform("Subdomain", "www.kiberzona.lv"), "www.kiberzona.lv"))
+        with mock.patch.object(domain_to_whois, "lookup", return_value=None), mock.patch("sys.stderr", io.StringIO()):
+            with self.assertRaises(TransformError):
+                domain_to_whois.handle(transform("Domain", "nothing-here.example"))
+
+
+def edges_of_whois(d):
+    value = {e["ref"]: e["value"] for e in d["entities"]}
+    value[INPUT_REF] = INPUT_REF
+    return {(value[e["source"]], e["label"], value[e["target"]]) for e in d["edges"]}
 
 
 class FallbackTests(unittest.TestCase):
@@ -695,6 +825,43 @@ class ProxyTests(unittest.TestCase):
             with self.assertRaises(TransformError) as ctx:
                 http_request("http://127.0.0.1:%d/" % self.web.server_address[1])
         self.assertIn("unreachable", str(ctx.exception))
+
+    def test_whois_tcp_goes_through_socks5(self):
+        from osint_transform import tcp_connect
+
+        port = self.socks.server_address[1]
+        with mock.patch.dict(os.environ, {"OSINT_PROXY": f"socks5h://127.0.0.1:{port}"}):
+            sock = tcp_connect("whois.target.invalid", 43)
+        with sock:
+            sock.sendall(b"GET / HTTP/1.0\r\nHost: whois.target.invalid\r\n\r\n")
+            self.assertIn(b"hello via", sock.recv(4096) + sock.recv(4096))
+        self.assertEqual(self.requested_hosts, [("whois.target.invalid", 43)])
+
+    def test_tcp_through_http_proxy_fails_closed_when_connect_is_refused(self):
+        import socket
+        import threading
+
+        from osint_transform import TransformError, tcp_connect
+
+        srv = socket.socket()
+        srv.bind(("127.0.0.1", 0))
+        srv.listen(1)
+        seen = []
+
+        def refuse():
+            c, _ = srv.accept()
+            seen.append(c.recv(4096))
+            c.sendall(b"HTTP/1.1 403 Forbidden\r\n\r\n")
+            c.close()
+
+        threading.Thread(target=refuse, daemon=True).start()
+        with mock.patch.dict(os.environ, {"OSINT_PROXY": f"http://u:p@127.0.0.1:{srv.getsockname()[1]}"}):
+            with self.assertRaises(TransformError) as ctx:
+                tcp_connect("whois.nic.lv", 43)
+        srv.close()
+        self.assertIn("403", str(ctx.exception))
+        self.assertTrue(seen[0].startswith(b"CONNECT whois.nic.lv:43 HTTP/1.1"))
+        self.assertIn(b"Proxy-Authorization: Basic dTpw", seen[0])
 
     def test_dns_uses_doh_when_proxied(self):
         with mock.patch.dict(os.environ, {"OSINT_PROXY": "socks5h://127.0.0.1:9050"}):

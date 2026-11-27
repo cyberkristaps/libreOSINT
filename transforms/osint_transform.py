@@ -318,6 +318,57 @@ def build_opener(*handlers: urllib.request.BaseHandler) -> urllib.request.Opener
     raise TransformError(f"unsupported proxy scheme {proxy.scheme!r} in {PROXY_ENV}")
 
 
+def tcp_connect(host: str, port: int, timeout: float = 20.0) -> socket.socket:
+    """Plain TCP connection (e.g. WHOIS on port 43) that honours OSINT_PROXY like HTTP requests do:
+    through SOCKS5, or an HTTP CONNECT tunnel. Never falls back to a direct connection when a proxy is set."""
+    raw = proxy_url()
+    try:
+        if not raw:
+            return socket.create_connection((host, port), timeout=timeout)
+        proxy = urllib.parse.urlsplit(raw)
+        if proxy.scheme in ("socks5", "socks5h"):
+            return socks5_connect(proxy, host, port, timeout)
+        if proxy.scheme in ("http", "https"):
+            return _http_connect_tunnel(proxy, host, port, timeout)
+    except OSError as err:
+        raise TransformError(f"connection to {host}:{port} failed: {err}") from err
+    raise TransformError(f"unsupported proxy scheme {proxy.scheme!r} in {PROXY_ENV}")
+
+
+def _http_connect_tunnel(proxy: urllib.parse.SplitResult, host: str, port: int, timeout: float) -> socket.socket:
+    import base64
+    import ssl
+
+    sock = socket.create_connection((proxy.hostname, proxy.port or (443 if proxy.scheme == "https" else 8080)), timeout=timeout)
+    try:
+        if proxy.scheme == "https":
+            sock = ssl.create_default_context().wrap_socket(sock, server_hostname=proxy.hostname)
+        target = f"[{host}]:{port}" if ":" in host else f"{host}:{port}"
+        lines = [f"CONNECT {target} HTTP/1.1", f"Host: {target}"]
+        if proxy.username:
+            cred = f"{urllib.parse.unquote(proxy.username)}:{urllib.parse.unquote(proxy.password or '')}"
+            lines.append("Proxy-Authorization: Basic " + base64.b64encode(cred.encode()).decode())
+        sock.sendall(("\r\n".join(lines) + "\r\n\r\n").encode())
+        head = b""
+        while b"\r\n\r\n" not in head:
+            chunk = sock.recv(1024)
+            if not chunk or len(head) > 16384:
+                raise OSError("proxy closed the connection during CONNECT")
+            head += chunk
+        status = head.split(b"\r\n", 1)[0].decode("latin-1")
+        if not _is_2xx(status):
+            raise OSError(f"proxy refused the tunnel to {target} ({status.strip()}); many HTTP proxies only allow port 443, a SOCKS5 proxy works for any port")
+        return sock
+    except BaseException:
+        sock.close()
+        raise
+
+
+def _is_2xx(status_line: str) -> bool:
+    parts = status_line.split()
+    return len(parts) >= 2 and parts[0].startswith("HTTP/") and parts[1].startswith("2")
+
+
 _DEFAULT_OPENER: Optional[urllib.request.OpenerDirector] = None
 
 
