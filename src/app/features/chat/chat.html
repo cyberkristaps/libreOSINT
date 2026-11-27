@@ -31,6 +31,13 @@
     @if (modelError()) {
       <p class="settings-error">{{ modelError() }}</p>
     }
+    <label>
+      <span>Investigation depth</span>
+      <select #depthSelect [value]="settings.depth()" (change)="settings.depth.set($any(depthSelect.value))">
+        <option value="thorough" [selected]="settings.depth() === 'thorough'">Thorough: follows leads, up to {{ thoroughSteps }} steps</option>
+        <option value="quick" [selected]="settings.depth() === 'quick'">Quick: up to {{ quickSteps }} steps</option>
+      </select>
+    </label>
     <label class="toggle">
       <input type="checkbox" [checked]="settings.autoApply()" (change)="settings.autoApply.set($any($event.target).checked)" />
       <span>Auto-apply to graph</span>

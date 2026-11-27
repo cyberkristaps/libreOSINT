@@ -1,3 +1,4 @@
+import { MAX_TOOL_STEPS, MAX_TOOL_STEPS_THOROUGH } from '../../core/models/chat-context';
 import {
   ChangeDetectionStrategy,
   Component,
@@ -37,6 +38,8 @@ export class Chat implements OnInit {
   private readonly logEl = viewChild<ElementRef<HTMLElement>>('log');
 
   protected readonly settingsOpen = signal(false);
+  protected readonly quickSteps = MAX_TOOL_STEPS;
+  protected readonly thoroughSteps = MAX_TOOL_STEPS_THOROUGH;
   protected readonly models = signal<string[]>([]);
   protected readonly modelStatus = signal<'unknown' | 'loading' | 'ok' | 'error'>('unknown');
   protected readonly modelError = signal('');

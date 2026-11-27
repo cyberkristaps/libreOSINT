@@ -1,8 +1,22 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
 import { AppendNoteArgs, ChatMessage, ChatMeta, ChatStep, CreateOrLinkArgs, Proposal, PROPOSAL_ID_PREFIX } from '../models/chat';
-import { CREATE_TOOL, MAX_TOOL_STEPS, NOTE_TOOL, buildSystemPrompt, buildTools } from '../models/chat-context';
-import { ENTITY_TYPES, EntityType, JsonValue, isEntityType } from '../models/entity';
-import { TransformResponse } from '../models/transform';
+import {
+  CREATE_TOOL,
+  MAX_COVERAGE_NUDGES,
+  MAX_TOOL_STEPS,
+  MAX_TOOL_STEPS_THOROUGH,
+  NOTE_TOOL,
+  buildSystemPrompt,
+  buildTools,
+  coverageGaps,
+  coverageNudge,
+  isFreeTextTransform,
+  mentionedEntities,
+  ranKey,
+} from '../models/chat-context';
+import { ENTITY_TYPES, Entity, EntityType, JsonValue, isEntityType } from '../models/entity';
+import { normalizeValue } from '../models/normalize';
+import { TransformManifestEntry, TransformResponse } from '../models/transform';
 import { ChatSettings } from './chat-settings';
 import { ConsoleLog } from './console-log';
 import { GraphStore } from './graph-store';
@@ -26,6 +40,11 @@ interface OllamaChatResponse {
   message?: OllamaMessage;
   error?: string;
 }
+
+/** Separator in branch (Collection) names, as the transforms write them: "News · example.com". */
+const COLLECTION_SEP = ' · ';
+
+const SUBJECT_TYPES: EntityType[] = ['Domain', 'Organization', 'Person'];
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const HISTORY_MESSAGES = 20;
@@ -59,6 +78,8 @@ export class ChatService {
   private cancelled = false;
   /** Bumped when the conversation is replaced (case opened/new, chat cleared): older turns must not touch it. */
   private generation = 0;
+  /** ranKey()s of the lookups run in the current turn (for the coverage check). */
+  private ran = new Set<string>();
   private readonly activeJobs = new Set<string>();
   /** Proposals being applied right now (dependencies included), to stop on cycles. */
   private readonly applying = new Set<string>();
@@ -115,10 +136,15 @@ export class ChatService {
         { autoApply: this.settings.autoApply(), transforms: manifest },
       );
       const convo: OllamaMessage[] = [{ role: 'system', content: system }, ...history, { role: 'user', content: prompt }];
+      const thorough = this.settings.depth() === 'thorough';
+      const maxSteps = thorough ? MAX_TOOL_STEPS_THOROUGH : MAX_TOOL_STEPS;
+      const before = new Set(this.store.entities().keys());
+      this.ran = new Set();
+      let nudges = 0;
 
       let final: string | null = null;
-      for (let step = 0; step <= MAX_TOOL_STEPS && final === null; step++) {
-        const lastRound = step === MAX_TOOL_STEPS;
+      for (let step = 0; step <= maxSteps && final === null; step++) {
+        const lastRound = step === maxSteps;
         if (lastRound) {
           convo.push({ role: 'user', content: 'Tool step limit reached. Summarize what you found so far without calling tools.' });
         }
@@ -142,6 +168,20 @@ export class ChatService {
         });
         convo.push({ role: 'assistant', content: msg.content ?? '', ...(calls.length ? { tool_calls: calls } : {}) });
         if (!calls.length) {
+          // Small models stop after the first result. In thorough mode, send them back while leads are unchecked.
+          const gaps = thorough && nudges < MAX_COVERAGE_NUDGES && step < maxSteps - 1 ? this.coverage(prompt, before, manifest) : [];
+          if (gaps.length) {
+            nudges++;
+            this.addStep(reply.id, {
+              kind: 'thinking',
+              name: 'Coverage check',
+              status: 'done',
+              summary: `${gaps.length} lookup${gaps.length > 1 ? 's' : ''} not run yet · continuing`,
+              detail: gaps.join('\n'),
+            });
+            convo.push({ role: 'user', content: coverageNudge(gaps) });
+            continue;
+          }
           final = msg.content ?? '';
           break;
         }
@@ -292,15 +332,24 @@ export class ChatService {
     const value = String(args['value'] ?? '').trim();
     if (!value) throw new Error('value is required');
     const type = this.pickType(value, args['entity_type'], entry.input_types);
+    const { input, params } = isFreeTextTransform(entry) ? this.searchInput(value, type) : { input: { type, value }, params: undefined };
     // Auto-apply: like a manual "Run lookup", results land on the graph, linked from the looked-up entity
     // (created first if the model is looking up something that isn't on the graph yet).
     const target = this.settings.autoApply()
-      ? (this.tools.findEntity(value, type) ?? this.store.upsertEntity({ type, value, tags: [AI_TAG] }).entity)
+      ? (this.tools.findEntity(input.value, input.type) ??
+        this.store.upsertEntity({ type: input.type, value: input.value, properties: input.properties, tags: [AI_TAG] }).entity)
       : undefined;
     const jobId = newJobId('ai');
     this.activeJobs.add(jobId);
     try {
-      const res = await this.transforms.run(name, { type, value: target?.value ?? value, id: target?.id }, { jobId });
+      for (const key of [target?.id, input.value, value, params?.['query']]) {
+        if (typeof key === 'string' && key) this.ran.add(ranKey(name, key));
+      }
+      const res = await this.transforms.run(
+        name,
+        { type: input.type, value: target?.value ?? input.value, id: target?.id, properties: target?.properties ?? input.properties },
+        { jobId, params },
+      );
       this.throwIfCancelled();
       let added: IngestResult | undefined;
       if (target && this.store.entities().has(target.id)) added = this.tools.ingestTransform(target.id, name, res);
@@ -310,6 +359,46 @@ export class ChatService {
     } finally {
       this.activeJobs.delete(jobId);
     }
+  }
+
+  /**
+   * What a free-text search (web/news) runs on. Models pass sentences like "example.com founders" and often
+   * label them with an entity type; a sentence is not a Domain, so:
+   * - a query that is exactly a graph entity runs on that entity;
+   * - a query that mentions a graph entity runs on it with the whole query as the search, so results attach there;
+   * - otherwise a value valid for the type becomes that entity (e.g. a person's name);
+   * - anything else gets its own "Search · <query>" branch.
+   */
+  private searchInput(query: string, type: EntityType): { input: { type: EntityType; value: string; properties?: Record<string, JsonValue> }; params?: Record<string, JsonValue> } {
+    const exact = this.tools.findEntity(query, type) ?? this.tools.findEntity(query);
+    if (exact) return { input: exact };
+    const mentioned = mentionedEntities(query, this.store.entities().values())[0];
+    if (mentioned) return { input: mentioned, params: { query } };
+    try {
+      normalizeValue(type, query);
+      if (type !== 'Collection') return { input: { type, value: query } };
+    } catch {
+      /* not a valid value of that type: fall through to a search branch */
+    }
+    return { input: { type: 'Collection', value: `Search${COLLECTION_SEP}${query}`, properties: { category: 'Search', query } } };
+  }
+
+  /** Lookups a thorough investigation of this request would still run (see coverageGaps). */
+  private coverage(prompt: string, before: ReadonlySet<string>, manifest: TransformManifestEntry[]): string[] {
+    const entities = this.store.entities();
+    const fresh = [...entities.values()].filter((e) => !before.has(e.id) && e.tags.includes(AI_TAG));
+    const subjects = new Map<string, Entity>();
+    for (const id of this.store.selectedIds()) if (entities.has(id)) subjects.set(id, entities.get(id)!);
+    for (const e of mentionedEntities(prompt, entities.values()).slice(0, 3)) subjects.set(e.id, e);
+    // Empty graph: the AI's first additions are the subject.
+    if (!subjects.size) for (const e of fresh.filter((x) => SUBJECT_TYPES.includes(x.type)).slice(0, 2)) subjects.set(e.id, e);
+    return coverageGaps({
+      subjects: [...subjects.values()],
+      leads: fresh.filter((e) => !subjects.has(e.id)),
+      transforms: manifest,
+      ran: this.ran,
+      edges: this.store.edges(),
+    });
   }
 
   /** Use the model's entity_type if valid, else the type of a matching graph entity, else the first input type. */

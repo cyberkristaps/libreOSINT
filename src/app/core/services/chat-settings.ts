@@ -3,10 +3,14 @@ import { Injectable, effect, signal } from '@angular/core';
 const KEY = 'libre-osint.ai-settings';
 export const DEFAULT_OLLAMA_URL = 'http://localhost:11434';
 
+/** quick: a few lookups. thorough: more steps, and the app sends the AI back for unchecked leads. */
+export type InvestigationDepth = 'quick' | 'thorough';
+
 interface Stored {
   url: string;
   model: string;
   autoApply: boolean;
+  depth: InvestigationDepth;
 }
 
 /** AI investigator preferences (per machine, not per case). */
@@ -16,6 +20,7 @@ export class ChatSettings {
   readonly model = signal('');
   /** When off, graph changes proposed by the AI are shown as cards for review instead of applied. */
   readonly autoApply = signal(true);
+  readonly depth = signal<InvestigationDepth>('thorough');
 
   constructor() {
     try {
@@ -23,11 +28,12 @@ export class ChatSettings {
       if (typeof s.url === 'string' && s.url) this.url.set(s.url);
       if (typeof s.model === 'string') this.model.set(s.model);
       if (typeof s.autoApply === 'boolean') this.autoApply.set(s.autoApply);
+      if (s.depth === 'quick' || s.depth === 'thorough') this.depth.set(s.depth);
     } catch {
       /* corrupt settings: keep defaults */
     }
     effect(() => {
-      const s: Stored = { url: this.url(), model: this.model(), autoApply: this.autoApply() };
+      const s: Stored = { url: this.url(), model: this.model(), autoApply: this.autoApply(), depth: this.depth() };
       localStorage.setItem(KEY, JSON.stringify(s));
     });
   }

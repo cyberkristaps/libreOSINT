@@ -8,7 +8,8 @@ import { TransformService } from './transform-service';
 import { ConsoleLog } from './console-log';
 import { TransformManifestEntry, TransformResponse } from '../models/transform';
 import { AI_TAG } from './graph-tools';
-import { MAX_TOOL_STEPS, buildSystemPrompt } from '../models/chat-context';
+import { MAX_COVERAGE_NUDGES, MAX_TOOL_STEPS, MAX_TOOL_STEPS_THOROUGH, buildSystemPrompt } from '../models/chat-context';
+import { ENTITY_TYPES } from '../models/entity';
 
 const DNS: TransformManifestEntry = {
   id: 'domain_to_dns',
@@ -22,6 +23,8 @@ const DNS: TransformManifestEntry = {
   requires_keys: [],
 };
 
+const WEB: TransformManifestEntry = { ...DNS, id: 'web_search', name: 'Web search', input_types: [...ENTITY_TYPES], output_types: ['URL'] };
+
 type Reply = { content?: string; tool_calls?: { function: { name: string; arguments: Record<string, unknown> } }[] };
 const call = (name: string, args: Record<string, unknown>) => ({ function: { name, arguments: args } });
 
@@ -30,6 +33,8 @@ class FakeBridge {
   replies: Reply[] = [];
   requests: Record<string, unknown>[] = [];
   transformCalls: { id: string; value: string; type: string }[] = [];
+  transformParams: (Record<string, unknown> | undefined)[] = [];
+  manifest: TransformManifestEntry[] = [DNS];
   cancelled: string[] = [];
   transformImpl: () => Promise<TransformResponse> = async () => ({
     contract_version: 1,
@@ -44,13 +49,14 @@ class FakeBridge {
     return { message: { role: 'assistant', content: next.content ?? '', tool_calls: next.tool_calls } };
   }
   async transformList() {
-    return [DNS];
+    return this.manifest;
   }
   logHandler?: (e: { job_id: string; transform_id: string; line: string }) => void;
   lastJob = '';
-  async transformRun(job: string, id: string, entity: { value: string; type: string }) {
+  async transformRun(job: string, id: string, entity: { value: string; type: string }, params?: Record<string, unknown>) {
     this.lastJob = job;
     this.transformCalls.push({ id, value: entity.value, type: entity.type });
+    this.transformParams.push(params);
     return this.transformImpl();
   }
   async cancelJob(job: string) {
@@ -189,6 +195,7 @@ describe('ChatService', () => {
   });
 
   it('stops tool calling after the step limit and asks for a summary without tools', async () => {
+    settings.depth.set('quick');
     store.upsertEntity({ type: 'Domain', value: 'example.com' });
     bridge.replies = Array.from({ length: MAX_TOOL_STEPS }, () => ({ tool_calls: [call('domain_to_dns', { value: 'example.com' })] }));
     bridge.replies.push({ content: 'Summary.' });
@@ -369,5 +376,123 @@ describe('ChatService', () => {
     expect(prompt).not.toContain('The graph is EMPTY');
     expect(buildSystemPrompt({ entities: new Map(), edges: new Map(), selectedIds: [] }, { autoApply: true, transforms: [] })).toContain('The graph is EMPTY');
     expect(prompt).toContain('Organization→Person: employs; Person→Organization: works_at; Person→Social_Account: has_account; Organization→Domain: owns');
+  });
+
+  describe('free-text searches', () => {
+    beforeEach(() => {
+      bridge.manifest = [DNS, WEB];
+      bridge.transformImpl = async () => ({
+        contract_version: 1,
+        entities: [{ ref: 'e1', type: 'URL', value: 'https://news.example/a', properties: {} }],
+        edges: [{ source: '$input', target: 'e1', label: 'mentioned_in' }],
+        messages: [],
+      });
+    });
+
+    it('runs a sentence that mentions a graph entity on that entity, with the sentence as the query', async () => {
+      const domain = store.upsertEntity({ type: 'Domain', value: 'kiberzona.lv' }, { x: 0, y: 0 }).entity;
+      bridge.replies = [{ tool_calls: [call('web_search', { entity_type: 'Domain', value: 'kiberzona.lv founders' })] }, { content: 'ok' }];
+
+      await chat.send('Find the founders');
+
+      expect(lastReply().meta?.steps.find((s) => s.kind === 'tool')?.status).toBe('done');
+      expect(bridge.transformCalls).toEqual([{ id: 'web_search', value: 'kiberzona.lv', type: 'Domain' }]);
+      expect(bridge.transformParams[0]).toEqual({ query: 'kiberzona.lv founders' });
+      expect([...store.entities().values()].filter((e) => e.type === 'Domain').map((e) => e.value)).toEqual(['kiberzona.lv']);
+      const url = [...store.entities().values()].find((e) => e.type === 'URL')!;
+      expect([...store.edges().values()].some((e) => e.source_id === domain.id && e.target_id === url.id)).toBe(true);
+    });
+
+    it('gives a query about nothing on the graph its own search branch instead of failing', async () => {
+      bridge.replies = [{ tool_calls: [call('web_search', { entity_type: 'Domain', value: 'who founded kiberzona' })] }, { content: 'ok' }];
+
+      await chat.send('Who founded it?');
+
+      expect(lastReply().meta?.steps.find((s) => s.kind === 'tool')?.status).toBe('done');
+      expect(bridge.transformCalls[0]).toEqual({ id: 'web_search', value: 'Search · who founded kiberzona', type: 'Collection' });
+      const branch = [...store.entities().values()].find((e) => e.type === 'Collection')!;
+      expect(branch.properties['query']).toBe('who founded kiberzona');
+    });
+
+    it('still adds a plain valid value, such as a name, as that entity', async () => {
+      bridge.replies = [{ tool_calls: [call('web_search', { entity_type: 'Person', value: 'Jane Doe' })] }, { content: 'ok' }];
+      await chat.send('Search her');
+      expect(bridge.transformCalls[0]).toEqual({ id: 'web_search', value: 'Jane Doe', type: 'Person' });
+      expect(bridge.transformParams[0]).toBeUndefined();
+    });
+
+    it('does not match an entity value inside a longer word', async () => {
+      store.upsertEntity({ type: 'Alias', value: 'kris' }, { x: 0, y: 0 });
+      bridge.replies = [{ tool_calls: [call('web_search', { value: 'kristaps security research' })] }, { content: 'ok' }];
+      await chat.send('Search');
+      expect(bridge.transformCalls[0].value).not.toBe('kris');
+    });
+  });
+
+  describe('thorough mode', () => {
+    const WHOIS: TransformManifestEntry = { ...DNS, id: 'domain_to_whois', name: 'WHOIS' };
+    const NEWS: TransformManifestEntry = { ...WEB, id: 'news_search', name: 'News' };
+
+    beforeEach(() => {
+      bridge.manifest = [DNS, WHOIS, WEB, NEWS];
+      bridge.transformImpl = async () => ({ contract_version: 1, entities: [], edges: [], messages: [] });
+      store.upsertEntity({ type: 'Domain', value: 'kiberzona.lv' }, { x: 0, y: 0 });
+    });
+
+    const toolCalls = () => bridge.transformCalls.map((c) => c.id);
+
+    it('sends the model back when it stops after one lookup, listing what is unchecked', async () => {
+      bridge.replies = [
+        { tool_calls: [call('web_search', { value: 'kiberzona.lv' })] },
+        { content: 'Found a few links.' }, // tries to stop here
+        { tool_calls: [call('domain_to_whois', { value: 'kiberzona.lv' }), call('news_search', { value: 'kiberzona' })] },
+        { content: 'Summary after the first nudge.' }, // DNS and targeted searches still unchecked: one more nudge
+        { content: 'Full summary.' },
+      ];
+
+      await chat.send('Find everything related to kiberzona.lv, people and news');
+
+      const nudge = bridge.requests[2]['messages'] as { role: string; content: string }[];
+      const last = nudge.at(-1)!;
+      expect(last.role).toBe('user');
+      expect(last.content).toContain('domain_to_whois value="kiberzona.lv"');
+      expect(last.content).toContain('domain_to_dns value="kiberzona.lv"');
+      expect(last.content).toContain('news_search value="kiberzona"');
+      expect(last.content).toContain('web_search value="kiberzona founder"');
+      expect(last.content).not.toContain('web_search value="kiberzona.lv"'); // already run
+      expect(toolCalls()).toEqual(['web_search', 'domain_to_whois', 'news_search']);
+      expect(lastReply().meta?.steps.filter((s) => s.name === 'Coverage check').length).toBe(MAX_COVERAGE_NUDGES);
+      expect(lastReply().content).toBe('Full summary.');
+    });
+
+    it('gives up after a bounded number of nudges', async () => {
+      bridge.replies = Array.from({ length: 10 }, (_, i) => ({ content: `answer ${i}` }));
+      await chat.send('Find everything about kiberzona.lv');
+      expect(bridge.requests.length).toBe(MAX_COVERAGE_NUDGES + 1);
+      expect(lastReply().content).toBe(`answer ${MAX_COVERAGE_NUDGES}`);
+    });
+
+    it('also follows leads the AI added, such as a username', async () => {
+      bridge.manifest = [{ ...DNS, id: 'username_to_accounts', name: 'Usernames', input_types: ['Alias', 'Social_Account'] }];
+      bridge.replies = [
+        { tool_calls: [call('create_or_link_entity', { source_id: 'kiberzona.lv', entity_type: 'Social_Account', value: 'x.com/cyberkristaps', edge_label: 'has_account' })] },
+        { content: 'Added the X account.' },
+        { content: 'Done.' },
+      ];
+      await chat.send('Who runs kiberzona.lv?');
+      const nudge = (bridge.requests[2]['messages'] as { content: string }[]).at(-1)!.content;
+      expect(nudge).toContain('username_to_accounts value="cyberkristaps"');
+    });
+
+    it('does not nudge in quick mode', async () => {
+      settings.depth.set('quick');
+      bridge.replies = [{ content: 'Short answer.' }];
+      await chat.send('Find everything about kiberzona.lv');
+      expect(bridge.requests.length).toBe(1);
+    });
+
+    it('allows more steps than quick mode', () => {
+      expect(MAX_TOOL_STEPS_THOROUGH).toBeGreaterThan(MAX_TOOL_STEPS);
+    });
   });
 });
