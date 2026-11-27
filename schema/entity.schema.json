@@ -29,7 +29,8 @@
         "Location",
         "URL",
         "SSL_Cert",
-        "Port_Service"
+        "Port_Service",
+        "Collection"
       ]
     }
   },

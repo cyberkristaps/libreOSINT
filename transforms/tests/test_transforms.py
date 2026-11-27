@@ -14,6 +14,7 @@ import domain_to_crtsh  # noqa: E402
 import domain_to_dns  # noqa: E402
 import fetch_page_text  # noqa: E402
 import ip_to_internetdb  # noqa: E402
+import news_search  # noqa: E402
 import username_to_accounts  # noqa: E402
 import ip_to_rdap  # noqa: E402
 import url_to_headers  # noqa: E402
@@ -21,8 +22,9 @@ import web_search  # noqa: E402
 from osint_transform import INPUT_REF, HttpResponse, Transform, run  # noqa: E402
 
 
-def transform(type_, value, params=None):
-    return Transform({"contract_version": 1, "transform_id": "t", "entity": {"id": "x", "type": type_, "value": value}, "params": params or {}})
+def transform(type_, value, params=None, properties=None):
+    entity = {"id": "x", "type": type_, "value": value, "properties": properties or {}}
+    return Transform({"contract_version": 1, "transform_id": "t", "entity": entity, "params": params or {}})
 
 
 def doc(t):
@@ -209,6 +211,110 @@ class SearchTests(unittest.TestCase):
             web_search.handle(t)
         self.assertEqual(t.data["provider"], "duckduckgo-instant-answer+wikipedia")
         self.assertEqual(doc(t)["entities"][0]["value"], "https://acme.example")
+
+
+def edges_of(t):
+    """(source value, label, target value) triples, with the input shown as "$input"."""
+    d = doc(t)
+    value = {e["ref"]: e["value"] for e in d["entities"]}
+    value[INPUT_REF] = INPUT_REF
+    return {(value[e["source"]], e["label"], value[e["target"]]) for e in d["edges"]}
+
+
+class GroupingTests(unittest.TestCase):
+    RESULTS = [
+        {"url": f"https://{u}", "title": u, "snippet": ""}
+        for u in (
+            "kiberzona.lv/", "www.kiberzona.lv/game/", "play.google.com/store/apps/a", "play.google.com/store/apps/b",
+            "www.youtube.com/watch?v=1", "www.la.lv/article", "kursors.lv/2026/07/05/x",
+        )
+    ]
+
+    def run_search(self, t):
+        with mock.patch.object(web_search, "search_duckduckgo", return_value=(self.RESULTS, "duckduckgo-html")), mock.patch("sys.stderr", io.StringIO()):
+            web_search.handle(t)
+        return edges_of(t)
+
+    def test_groups_results_into_branches(self):
+        edges = self.run_search(transform("Domain", "kiberzona.lv"))
+        self.assertIn((INPUT_REF, "has_results", "Site pages · kiberzona.lv"), edges)
+        self.assertIn(("Site pages · kiberzona.lv", "contains", "https://www.kiberzona.lv/game/"), edges)
+        self.assertIn(("Apps · kiberzona.lv", "contains", "https://play.google.com/store/apps/a"), edges)
+        self.assertIn(("Other sites · kiberzona.lv", "contains", "https://kursors.lv/2026/07/05/x"), edges)
+        # A lone result in its category is not worth a branch.
+        self.assertIn((INPUT_REF, "mentioned_in", "https://www.youtube.com/watch?v=1"), edges)
+        self.assertEqual(sum(1 for s, _, _ in edges if s == INPUT_REF), 4)
+
+    def test_branch_lists_before_its_results(self):
+        t = transform("Domain", "kiberzona.lv")
+        self.run_search(t)
+        types = [e["type"] for e in doc(t)["entities"]]
+        self.assertEqual(types[0], "Collection")
+
+    def test_search_from_a_branch_adds_to_it(self):
+        t = transform("Collection", "Other sites · kiberzona.lv", properties={"query": "kiberzona.lv"})
+        edges = self.run_search(t)
+        self.assertEqual(t.data["query"], "kiberzona.lv")
+        self.assertTrue(all(s == INPUT_REF and label == "contains" for s, label, _ in edges))
+        self.assertFalse(any(e["type"] == "Collection" for e in doc(t)["entities"]))
+
+    def test_branch_query_falls_back_to_its_value(self):
+        from osint_transform import search_query
+
+        self.assertEqual(search_query(transform("Collection", "News · ACME Corp")), "ACME Corp")
+        self.assertEqual(search_query(transform("Person", " Jane ", params={"query": "Jane Doe Riga"})), "Jane Doe Riga")
+
+
+class NewsTests(unittest.TestCase):
+    FEED = b"""<?xml version="1.0" encoding="utf-8" ?><rss version="2.0" xmlns:News="https://www.bing.com/news/search?q=x&amp;format=rss"><channel>
+    <item><title>App teaches  security</title>
+      <link>http://www.bing.com/news/apiclick.aspx?ref=FexRss&amp;aid=&amp;url=https%3a%2f%2fnews.example.lv%2fa%3flanguage%3dlv&amp;c=1</link>
+      <description>Snippet</description><pubDate>Sat, 31 Oct 2026 00:00:00 GMT</pubDate><News:Source>news.example.lv</News:Source></item>
+    <item><title>Dup</title><link>http://www.bing.com/news/apiclick.aspx?url=https%3a%2f%2fnews.example.lv%2fa%3flanguage%3dlv</link></item>
+    <item><title>Direct</title><link>https://b.example/x</link><pubDate>bogus</pubDate></item>
+    <item><title>Bad</title><link>javascript:alert(1)</link></item>
+    </channel></rss>"""
+
+    def test_parses_bing_feed(self):
+        items = news_search.parse_feed(self.FEED)
+        self.assertEqual([i["url"] for i in items], ["https://news.example.lv/a?language=lv", "https://b.example/x"])
+        self.assertEqual(items[0]["published"], "2026-10-31T00:00:00Z")
+        self.assertEqual(items[0]["outlet"], "news.example.lv")
+        self.assertEqual(items[0]["title"], "App teaches security")
+        self.assertEqual(items[1]["published"], "")
+
+    def test_refuses_feeds_with_a_dtd(self):
+        from osint_transform import TransformError
+
+        bomb = b'<?xml version="1.0"?><!DOCTYPE r [<!ENTITY a "aaaa">]><rss>&a;</rss>'
+        with self.assertRaises(TransformError):
+            news_search.parse_feed(bomb)
+
+    def test_articles_go_under_a_news_branch(self):
+        t = transform("Domain", "kiberzona.lv")
+        resp = HttpResponse(200, news_search.ENDPOINT, {}, self.FEED)
+        with mock.patch.object(news_search, "http_request", return_value=resp), mock.patch("sys.stderr", io.StringIO()):
+            news_search.handle(t)
+        edges = edges_of(t)
+        self.assertIn((INPUT_REF, "has_results", "News · kiberzona.lv"), edges)
+        self.assertIn(("News · kiberzona.lv", "contains", "https://b.example/x"), edges)
+        article = next(e for e in doc(t)["entities"] if e["value"].startswith("https://news."))
+        self.assertEqual(article["properties"]["outlet"], "news.example.lv")
+
+    def test_run_on_the_news_branch_adds_to_it(self):
+        t = transform("Collection", "News · kiberzona.lv", properties={"query": "kiberzona.lv"})
+        resp = HttpResponse(200, news_search.ENDPOINT, {}, self.FEED)
+        with mock.patch.object(news_search, "http_request", return_value=resp) as req, mock.patch("sys.stderr", io.StringIO()):
+            news_search.handle(t)
+        self.assertIn("q=kiberzona.lv", req.call_args[0][0])
+        self.assertEqual({(s, label) for s, label, _ in edges_of(t)}, {(INPUT_REF, "contains")})
+
+    def test_no_articles_adds_nothing(self):
+        t = transform("Person", "Nobody")
+        resp = HttpResponse(200, news_search.ENDPOINT, {}, b"<rss><channel></channel></rss>")
+        with mock.patch.object(news_search, "http_request", return_value=resp), mock.patch("sys.stderr", io.StringIO()):
+            news_search.handle(t)
+        self.assertEqual(doc(t)["entities"], [])
 
 
 class FallbackTests(unittest.TestCase):

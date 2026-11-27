@@ -25,6 +25,7 @@ import { GraphStore } from '../../core/services/graph-store';
 import { ConsoleLog } from '../../core/services/console-log';
 import { ThemeService } from '../../core/services/theme';
 import { CanvasControl, LAYOUTS, LayoutName } from '../../core/services/canvas-control';
+import { tidyLayout } from '../../core/models/tidy-layout';
 import { ENTITY_DRAG_MIME } from '../palette/palette';
 import { ContextMenu, MenuEntry } from '../context-menu/context-menu';
 import { TransformService } from '../../core/services/transform-service';
@@ -65,6 +66,18 @@ interface PendingLink {
   suggestions: string[];
   screen: { x: number; y: number };
   error: string | null;
+}
+
+const MOVE_MS = 350;
+
+/** A type's short code (e.g. URL, DOM) as an SVG drawn inside its node. */
+function typeBadge(code: string): string {
+  const size = code.length > 3 ? 9 : code.length > 2 ? 10 : 12;
+  const svg =
+    `<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 40 40">` +
+    `<text x="20" y="21" text-anchor="middle" dominant-baseline="middle" fill="#ffffff" ` +
+    `font-family="-apple-system, system-ui, Segoe UI, sans-serif" font-weight="700" font-size="${size * 1.4}">${code}</text></svg>`;
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
 }
 
 /** Elements edgehandles adds temporarily while a link is being drawn. */
@@ -187,6 +200,8 @@ export class Canvas implements AfterViewInit, OnDestroy {
   private readonly destroyRef = inject(DestroyRef);
   private cy?: Core;
   private headless = false;
+  /** Set by tidy(): the next sync glides nodes to their new spots instead of jumping. */
+  private animateMoves = false;
   private eh?: ReturnType<Core['edgehandles']>;
 
   protected readonly layouts = LAYOUTS;
@@ -252,8 +267,8 @@ export class Canvas implements AfterViewInit, OnDestroy {
             'text-valign': 'bottom',
             'text-margin-y': 4,
             color: '#334155',
-            width: 28,
-            height: 28,
+            width: 32,
+            height: 32,
             'background-color': '#64748b',
             'text-max-width': '160px',
             'text-wrap': 'ellipsis',
@@ -261,8 +276,16 @@ export class Canvas implements AfterViewInit, OnDestroy {
         },
         ...ENTITY_TYPES.map((t) => ({
           selector: `node[type = "${t}"]`,
-          style: { 'background-color': ENTITY_META[t].color },
+          style: {
+            'background-color': ENTITY_META[t].color,
+            // The type's short code inside the circle, so a URL and a domain are told apart at a glance.
+            'background-image': typeBadge(ENTITY_META[t].code),
+            'background-width': '100%',
+            'background-height': '100%',
+          },
         })),
+        // A collection is a branch, not a finding: draw it as a tab so it reads differently.
+        { selector: 'node[type = "Collection"]', style: { shape: 'round-rectangle', width: 44, height: 26 } },
         { selector: 'node:selected', style: { 'border-width': 3, 'border-color': '#f59e0b' } },
         { selector: ':parent', style: { 'background-opacity': 0.08, 'border-style': 'dashed' } },
         {
@@ -628,6 +651,7 @@ export class Canvas implements AfterViewInit, OnDestroy {
 
   // --- commands ---------------------------------------------------------------------
   runLayout(name: LayoutName): void {
+    if (name === 'tidy') return this.tidy();
     if (!this.cy || this.cy.nodes().empty()) return;
     const layout = this.cy.layout({ name, animate: true, fit: true, padding: 40 } as cytoscape.LayoutOptions);
     layout.one('layoutstop', () => {
@@ -640,6 +664,21 @@ export class Canvas implements AfterViewInit, OnDestroy {
 
   fit(): void {
     this.cy?.fit(undefined, 40);
+  }
+
+  /**
+   * Branch-aware layout computed from the store (not from Cytoscape), so it also covers entities a lookup
+   * just added that the canvas has not drawn yet. One undo step.
+   */
+  tidy(): void {
+    const entities = [...this.store.entities().values()];
+    if (!entities.length) return;
+    const pos = tidyLayout(entities, [...this.store.edges().values()]);
+    this.animateMoves = true;
+    this.store.group('Tidy layout', () => pos.forEach((p, id) => this.store.setPosition(id, p)));
+    if (this.headless) return;
+    // After the nodes have glided into place, bring the whole graph into view.
+    setTimeout(() => this.cy?.animate({ fit: { eles: this.cy.nodes(), padding: 50 } }, { duration: 300 }), MOVE_MS + 20);
   }
 
   ngOnDestroy(): void {
@@ -674,7 +713,14 @@ export class Canvas implements AfterViewInit, OnDestroy {
           cy.add({ group: 'nodes', data: { id: e.id, type: e.type, value: e.value }, position: { ...at } });
         } else {
           node.data({ type: e.type, value: e.value });
-          if (pos && !node.grabbed()) node.position({ ...pos });
+          if (pos && !node.grabbed()) {
+            const cur = node.position();
+            if (cur.x !== pos.x || cur.y !== pos.y) {
+              node.stop(true);
+              if (this.animateMoves && !this.headless) node.animate({ position: { ...pos } }, { duration: MOVE_MS });
+              else node.position({ ...pos });
+            }
+          }
         }
       }
       for (const e of edges.values()) {
@@ -685,6 +731,7 @@ export class Canvas implements AfterViewInit, OnDestroy {
         }
       }
     });
+    this.animateMoves = false;
     this.empty.set(cy.elements().empty());
     if (placed.size) {
       // Persist the chosen spots (outside the effect's own read) and bring new nodes into view.

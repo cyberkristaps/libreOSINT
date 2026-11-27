@@ -16,6 +16,7 @@ export const ENTITY_TYPES = [
   'URL',
   'SSL_Cert',
   'Port_Service',
+  'Collection',
 ] as const;
 
 export type EntityType = (typeof ENTITY_TYPES)[number];

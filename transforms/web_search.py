@@ -14,13 +14,32 @@ import urllib.parse
 from html.parser import HTMLParser
 from typing import Dict, List, Optional
 
-from osint_transform import Transform, TransformError, http_request, main
+from osint_transform import Transform, TransformError, collection_name, http_request, main, search_query
 
 ENDPOINT = "https://html.duckduckgo.com/html/"
 LITE_ENDPOINT = "https://lite.duckduckgo.com/lite/"
 LINK_CLASSES = {"result__a", "result-link"}
 SNIPPET_CLASSES = {"result__snippet", "result-snippet"}
 MAX_RESULTS = 10
+# Results are grouped into branches (Collection entities) so a search doesn't fan out into a wall of links.
+# A category with fewer results than this links straight to the searched entity.
+MIN_GROUP = 2
+SITE_PAGES = "Site pages"
+APPS = "Apps"
+SOCIAL = "Social & video"
+REFERENCE = "Reference"
+OTHER = "Other sites"
+APP_HOSTS = (
+    "play.google.com", "apps.apple.com", "itunes.apple.com", "apps.microsoft.com", "chromewebstore.google.com",
+    "chrome.google.com", "addons.mozilla.org", "f-droid.org", "appgallery.huawei.com", "galaxystore.samsung.com",
+)
+SOCIAL_HOSTS = (
+    "youtube.com", "youtu.be", "facebook.com", "fb.com", "instagram.com", "x.com", "twitter.com", "tiktok.com",
+    "linkedin.com", "reddit.com", "vk.com", "t.me", "telegram.me", "threads.net", "pinterest.com", "twitch.tv",
+    "vimeo.com", "dailymotion.com", "medium.com", "tumblr.com", "bsky.app", "mastodon.social", "github.com",
+    "gitlab.com", "soundcloud.com", "spotify.com", "discord.com", "discord.gg", "snapchat.com", "draugiem.lv",
+)
+REFERENCE_HOSTS = ("wikipedia.org", "wikidata.org", "wikimedia.org", "britannica.com")
 
 
 class _ResultParser(HTMLParser):
@@ -165,8 +184,72 @@ def search_fallback(t: Transform, query: str) -> List[Dict[str, str]]:
     return dedupe(results)
 
 
+def _host(url: str) -> str:
+    try:
+        host = (urllib.parse.urlsplit(url).hostname or "").lower().rstrip(".")
+    except ValueError:
+        return ""
+    return host[4:] if host.startswith("www.") else host
+
+
+def _under(host: str, domains) -> bool:
+    return any(host == d or host.endswith("." + d) for d in domains)
+
+
+def site_of(t: Transform) -> Optional[str]:
+    """The searched entity's own site, so its pages can be told apart from third-party mentions."""
+    if t.entity_type in ("Domain", "Subdomain"):
+        host = t.value.strip().lower().rstrip(".")
+    elif t.entity_type == "URL":
+        host = _host(t.value)
+    elif t.entity_type == "Email" and "@" in t.value:
+        host = t.value.rsplit("@", 1)[1].strip().lower()
+    else:
+        return None
+    host = host[4:] if host.startswith("www.") else host
+    return host or None
+
+
+def category(url: str, site: Optional[str]) -> str:
+    host = _host(url)
+    if site and _under(host, (site,)):
+        return SITE_PAGES
+    if _under(host, APP_HOSTS):
+        return APPS
+    if _under(host, SOCIAL_HOSTS):
+        return SOCIAL
+    if _under(host, REFERENCE_HOSTS):
+        return REFERENCE
+    return OTHER
+
+
+def add_results(t: Transform, query: str, results: List[Dict[str, str]]) -> None:
+    """Add result URLs, grouped by category under Collection branches."""
+    if t.entity_type == "Collection":
+        # Searching from a branch adds to that branch instead of nesting another level.
+        for r in results:
+            ref = t.add_entity("URL", r["url"], {"title": r["title"], "snippet": r["snippet"], "search_query": query})
+            t.link(t.INPUT, ref, "contains")
+        return
+    site = site_of(t)
+    groups: Dict[str, List[Dict[str, str]]] = {}
+    for r in results:
+        groups.setdefault(category(r["url"], site), []).append(r)
+    for cat, items in groups.items():
+        parent, label = t.INPUT, "mentioned_in"
+        if len(items) >= MIN_GROUP:
+            parent = t.add_entity(
+                "Collection", collection_name(cat, query), {"category": cat, "query": query, "results": len(items)}
+            )
+            t.link(t.INPUT, parent, "has_results")
+            label = "contains"
+        for r in items:
+            ref = t.add_entity("URL", r["url"], {"title": r["title"], "snippet": r["snippet"], "search_query": query, "category": cat})
+            t.link(parent, ref, label)
+
+
 def handle(t: Transform) -> None:
-    query = str(t.params.get("query") or t.value).strip()
+    query = search_query(t)
     if not query:
         raise TransformError("empty search query")
     t.log(f"searching: {query}")
@@ -184,9 +267,7 @@ def handle(t: Transform) -> None:
             "An empty or short result list is NOT evidence that nothing exists online."
         )
     t.log(f"{len(results)} result(s)")
-    for r in results:
-        ref = t.add_entity("URL", r["url"], {"title": r["title"], "snippet": r["snippet"], "search_query": query})
-        t.link(t.INPUT, ref, "mentioned_in")
+    add_results(t, query, results)
     t.data["query"] = query
     t.data["results"] = results
 

@@ -6,6 +6,7 @@ import { AppendNoteArgs, CreateOrLinkArgs } from '../models/chat';
 import { INPUT_REF, TransformResponse } from '../models/transform';
 import { Position } from '../models/case';
 import { GraphStore } from './graph-store';
+import { CanvasControl } from './canvas-control';
 
 export const AI_TAG = 'ai-investigator';
 
@@ -42,6 +43,7 @@ function appendBlock(notes: string, block: string): string {
 @Injectable({ providedIn: 'root' })
 export class GraphTools {
   private readonly store = inject(GraphStore);
+  private readonly canvas = inject(CanvasControl);
 
   /**
    * Find an entity by id, or by value (models often pass the value they see instead of the id).
@@ -109,7 +111,9 @@ export class GraphTools {
 
   /** Add a transform's output to the graph around `sourceId` (manual "Run lookup"). */
   ingestTransform(sourceId: string, transformId: string, resp: TransformResponse): IngestResult {
-    return this.store.group(`Lookup ${transformId}`, () => this.ingestInner(sourceId, transformId, resp));
+    const r = this.store.group(`Lookup ${transformId}`, () => this.ingestInner(sourceId, transformId, resp));
+    this.canvas.afterLookup(r.created);
+    return r;
   }
 
   private ingestInner(sourceId: string, transformId: string, resp: TransformResponse): IngestResult {

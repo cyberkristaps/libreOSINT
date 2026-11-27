@@ -58,6 +58,9 @@ const RULES: Rule[] = [
   [HOSTS, ['SSL_Cert'], ['presents_cert']],
   [['URL'], HOSTS, ['hosted_on']],
   [HOSTS, ['URL'], ['serves']],
+  // collections (branches that group results)
+  ['*', ['Collection'], ['has_results']],
+  [['Collection'], '*', ['contains']],
   ['*', '*', ['associated_with', 'mentions']],
 ];
 

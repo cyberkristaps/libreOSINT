@@ -27,10 +27,12 @@ pub enum EntityType {
     SslCert,
     #[serde(rename = "Port_Service")]
     PortService,
+    /// A branch that groups related results (e.g. "News · example.com").
+    Collection,
 }
 
 impl EntityType {
-    pub const ALL: [EntityType; 14] = [
+    pub const ALL: [EntityType; 15] = [
         EntityType::Domain,
         EntityType::Subdomain,
         EntityType::IPv4,
@@ -45,6 +47,7 @@ impl EntityType {
         EntityType::Url,
         EntityType::SslCert,
         EntityType::PortService,
+        EntityType::Collection,
     ];
 }
 
@@ -66,6 +69,7 @@ impl EntityType {
             EntityType::Url => "URL",
             EntityType::SslCert => "SSL_Cert",
             EntityType::PortService => "Port_Service",
+            EntityType::Collection => "Collection",
         }
     }
 
@@ -337,7 +341,7 @@ mod tests {
         assert_eq!(
             names,
             [
-                "Domain", "Subdomain", "IPv4", "IPv6", "Email", "Phone_Number", "Person", "Alias", "Organization", "Social_Account", "Location", "URL", "SSL_Cert", "Port_Service"
+                "Domain", "Subdomain", "IPv4", "IPv6", "Email", "Phone_Number", "Person", "Alias", "Organization", "Social_Account", "Location", "URL", "SSL_Cert", "Port_Service", "Collection"
             ]
         );
     }

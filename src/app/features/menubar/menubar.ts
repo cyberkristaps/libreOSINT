@@ -131,6 +131,10 @@ export class Menubar {
       label: 'View',
       items: [
         ...LAYOUTS.map((l) => ({ label: `Layout: ${l.label}`, action: () => this.canvas.send({ kind: 'layout', name: l.name }) })),
+        {
+          label: () => `${this.canvas.autoTidy() ? '✓' : '   '} Tidy after lookups`,
+          action: () => this.canvas.autoTidy.update((on) => !on),
+        },
         'separator',
         { label: 'Fit graph to window', shortcut: 'mod+0', action: () => this.canvas.send({ kind: 'fit' }) },
         { label: 'Toggle console', shortcut: 'mod+j', action: () => this.log.collapsed.update((c) => !c) },

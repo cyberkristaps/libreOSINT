@@ -26,6 +26,11 @@ describe('suggestEdgeLabels', () => {
     expect(suggestEdgeLabels('SSL_Cert', 'Subdomain')[0]).toBe('issued_to');
   });
 
+  it('offers branch relations for collections', () => {
+    expect(suggestEdgeLabels('Domain', 'Collection')[0]).toBe('has_results');
+    expect(suggestEdgeLabels('Collection', 'URL')[0]).toBe('contains');
+  });
+
   it('always ends with the default label and never repeats', () => {
     for (const labels of [suggestEdgeLabels('Port_Service', 'Person'), suggestEdgeLabels('Person', 'Person')]) {
       expect(labels.at(-1)).toBe(DEFAULT_EDGE_LABEL);

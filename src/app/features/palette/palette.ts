@@ -17,7 +17,7 @@ export const ENTITY_DRAG_MIME = 'application/x-libre-osint-entity-type';
           [attr.title]="'Drag onto the canvas to add a ' + meta[t].label"
           (dragstart)="onDragStart($event, t)"
         >
-          <span class="glyph" [style.background]="meta[t].color">{{ meta[t].glyph }}</span>
+          <span class="glyph" [class.glyph-long]="meta[t].code.length > 3" [style.background]="meta[t].color">{{ meta[t].code }}</span>
           <span>{{ meta[t].label }}</span>
         </li>
       }

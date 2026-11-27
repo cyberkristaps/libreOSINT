@@ -20,11 +20,11 @@ describe('App', () => {
     }
   });
 
-  it('lists all 14 entity types in the palette', async () => {
+  it('lists all 15 entity types in the palette', async () => {
     const fixture = TestBed.createComponent(App);
     await fixture.whenStable();
     const items = (fixture.nativeElement as HTMLElement).querySelectorAll('.palette-item');
-    expect(items.length).toBe(14);
+    expect(items.length).toBe(15);
   });
 
   it('has a File menu with New / Open / Save / Save As', async () => {

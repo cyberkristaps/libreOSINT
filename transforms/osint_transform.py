@@ -48,6 +48,7 @@ ENTITY_TYPES = frozenset(
         "URL",
         "SSL_Cert",
         "Port_Service",
+        "Collection",
     }
 )
 LOG_LEVELS = frozenset({"debug", "info", "warn", "error"})
@@ -145,6 +146,27 @@ class Transform:
 # SOCKS always resolves hostnames on the proxy side (no DNS leaks). There is no fallback to a direct
 # connection: if the proxy is unreachable, requests fail.
 PROXY_ENV = "OSINT_PROXY"
+
+
+COLLECTION_SEP = " · "
+
+
+def collection_name(category: str, query: str) -> str:
+    """Value of the Collection (branch) that groups `category` results for `query`, e.g. "News · example.com"."""
+    return f"{category}{COLLECTION_SEP}{query}"
+
+
+def search_query(t: Transform) -> str:
+    """What a search transform should look for: an explicit `query` param, the query a Collection was built
+    for (so running a search on a branch adds to that branch), or the entity value."""
+    if t.params.get("query"):
+        return str(t.params["query"]).strip()
+    if t.entity_type == "Collection":
+        q = t.properties.get("query")
+        if isinstance(q, str) and q.strip():
+            return q.strip()
+        return t.value.split(COLLECTION_SEP, 1)[-1].strip()
+    return t.value.strip()
 
 
 def proxy_url() -> Optional[str]:
